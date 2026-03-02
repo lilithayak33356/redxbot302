@@ -5,9 +5,9 @@ module.exports = {
   command: 'menu',
   aliases: ['help', 'cmd'],
   category: 'main',
-  description: 'Show all available commands',
+  description: 'Show interactive menu with category buttons',
   usage: '.menu [category]',
-  
+
   async handler(sock, message, args, context) {
     const { chatId, channelInfo } = context;
     const category = args[0]?.toLowerCase();
@@ -29,38 +29,33 @@ module.exports = {
       });
       text += `\n╚════════════════════╝\n\n📌 *Total: ${commands.length} commands*`;
 
-      await sock.sendMessage(chatId, {
-        text,
-        ...channelInfo
-      }, { quoted: message });
-    } else {
-      // Show all categories with command counts
-      const categories = Array.from(commandHandler.categories.keys());
-      let text = `╔═══《 *${settings.botName} MENU* 》═══╗\n\n`;
-      text += `║ *Owner:* Abdul Rehman Rajpoot & Muzamil Khan\n`;
-      text += `║ *Prefix:* ${settings.prefixes.join(', ')}\n`;
-      text += `║ *Total Commands:* ${commandHandler.commands.size}\n\n`;
-
-      categories.sort().forEach(cat => {
-        const cmdList = commandHandler.getCommandsByCategory(cat);
-        text += `╠═══《 *${cat.toUpperCase()}* 》═══╣\n`;
-        cmdList.slice(0, 5).forEach(cmd => {
-          text += `║ ✦ *${cmd}*\n`;
-        });
-        if (cmdList.length > 5) {
-          text += `║ ... and ${cmdList.length - 5} more\n`;
-        }
-        text += `║ 📌 *Total: ${cmdList.length}*\n\n`;
-      });
-
-      text += `╚══════════════════════════╝\n\n`;
-      text += `📌 *Use .menu <category> to see full category*\n`;
-      text += `🔗 *Channel:* ${settings.channelLink}`;
-
-      await sock.sendMessage(chatId, {
+      return await sock.sendMessage(chatId, {
         text,
         ...channelInfo
       }, { quoted: message });
     }
+
+    // Build main menu with category buttons
+    const categories = Array.from(commandHandler.categories.keys()).sort();
+    const buttons = categories.map(cat => ({
+      buttonId: `cat_${cat}`,
+      buttonText: { displayText: cat.toUpperCase() },
+      type: 1 // quick reply button
+    }));
+
+    // Prepare header text
+    const headerText = `╔═══《 *${settings.botName} MENU* 》═══╗\n\n` +
+                       `👑 *Owner:* Abdul Rehman Rajpoot & Muzamil Khan\n` +
+                       `📌 *Prefix:* ${settings.prefixes.join(', ')}\n` +
+                       `📊 *Total Commands:* ${commandHandler.commands.size}\n\n` +
+                       `🔽 *Select a category below:*`;
+
+    await sock.sendMessage(chatId, {
+      text: headerText,
+      footer: `🔗 ${settings.channelLink}`,
+      buttons: buttons,
+      headerType: 1,
+      ...channelInfo
+    }, { quoted: message });
   }
 };
