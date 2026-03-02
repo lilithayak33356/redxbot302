@@ -2,89 +2,155 @@ const axios = require('axios');
 
 module.exports = {
   command: 'play',
-  aliases: ['music', 'song'],
+  aliases: ['plays', 'music'],
   category: 'music',
-  description: 'Download a song as MP3 (Akuari API)',
+  description: 'Search and download a song as MP3 from the new music API',
   usage: '.play <song name>',
   
-  async handler(sock, message, args, context) {
-    const { chatId, channelInfo } = context;
-    const query = args.join(' ').trim();
+  async handler(sock, message, args, context = {}) {
+    const chatId = context.chatId || message.key.remoteJid;
+    const searchQuery = args.join(' ').trim();
 
-    if (!query) {
-      return await sock.sendMessage(chatId, {
-        text: "❌ *Missing song name*\nExample: .play Believer",
-        ...channelInfo
-      }, { quoted: message });
-    }
+    // Helper function to wait
+    const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-    await sock.sendMessage(chatId, {
-      text: "🔍 *Searching for your song...*",
-      ...channelInfo
-    }, { quoted: message });
+    // Helper function for API calls with retry logic
+    const apiCallWithRetry = async (url, maxRetries = 3, baseDelay = 2000) => {
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          // Add delay before each request to respect rate limits
+          await wait(1000);
+          
+          const response = await axios.get(url, { 
+            timeout: 45000,
+            headers: {
+              'User-Agent': 'Mozilla/5.0'
+            }
+          });
+          
+          return response;
+        } catch (error) {
+          const isRateLimited = error.response?.status === 429 || 
+                               error.code === 'ECONNABORTED' ||
+                               error.code === 'ETIMEDOUT';
+          
+          if (attempt === maxRetries) {
+            throw error;
+          }
+
+          if (isRateLimited) {
+            // Exponential backoff for rate limiting
+            const delay = baseDelay * Math.pow(2, attempt - 1);
+            console.log(`Rate limited or timeout. Retrying in ${delay}ms... (Attempt ${attempt}/${maxRetries})`);
+            await wait(delay);
+          } else {
+            throw error;
+          }
+        }
+      }
+    };
 
     try {
-      // Search using Akuari API
-      const searchUrl = `https://api.akuari.my.id/apis/spotify?q=${encodeURIComponent(query)}`;
-      const searchRes = await axios.get(searchUrl, { timeout: 15000 });
-
-      if (!searchRes.data?.result?.length) {
-        throw new Error('No results');
+      if (!searchQuery) {
+        return await sock.sendMessage(chatId, {
+          text: "*Which song do you want to play?*\nUsage: .play <song name>"
+        }, { quoted: message });
       }
 
-      const track = searchRes.data.result[0];
-      const title = track.title;
-      const artist = track.artist;
-      const duration = track.duration;
-      const thumbnail = track.thumbnail;
-      const spotifyUrl = track.url;
-
       await sock.sendMessage(chatId, {
-        text: `✅ *Found:* ${title} - ${artist}\n⏱️ *Duration:* ${duration}\n⏳ *Downloading...*`,
-        ...channelInfo
+        text: "🔍 *Searching for your song...*"
       }, { quoted: message });
 
-      // Download using Akuari download endpoint
-      const downloadUrl = `https://api.akuari.my.id/apis/spotify/download?url=${encodeURIComponent(spotifyUrl)}`;
-      const downloadRes = await axios.get(downloadUrl, { timeout: 30000 });
+      // ------------------------------------------------------------
+      // NEW API IMPLEMENTATION (as of 8th June 2025)
+      // Search using the specified engine (seevn returns direct MP3)
+      // ------------------------------------------------------------
+      const searchEngine = 'seevn'; // You can change this to: gaama, seevn, hunjama, mtmusic, wunk
+      const searchUrl = `https://musicapi.x007.workers.dev/search?q=${encodeURIComponent(searchQuery)}&searchEngine=${searchEngine}`;
+      const searchResponse = await apiCallWithRetry(searchUrl);
 
-      if (!downloadRes.data?.result?.download) {
-        throw new Error('Download link not found');
+      // Check if search was successful and returned results
+      if (!searchResponse.data?.status === 200 || !searchResponse.data?.response?.length) {
+        return await sock.sendMessage(chatId, {
+          text: "❌ *No songs found!*\nTry a different search term or engine."
+        }, { quoted: message });
       }
 
-      const audioUrl = downloadRes.data.result.download;
+      const topResult = searchResponse.data.response[0];
+      const songId = topResult.id;
+      const songTitle = topResult.title;
+      const coverImageUrl = topResult.img; // Cover image URL
 
-      // Get thumbnail buffer
-      let thumbBuffer = null;
-      if (thumbnail) {
+      await sock.sendMessage(chatId, {
+        text: `✅ *Found!*\n\n🎵 *Song:* ${songTitle}\n\n⏳ *Downloading...*`
+      }, { quoted: message });
+
+      // Wait before making download request to respect rate limits
+      await wait(1500);
+
+      // Fetch the actual audio file URL
+      const fetchUrl = `https://musicapi.x007.workers.dev/fetch?id=${songId}`;
+      const fetchResponse = await apiCallWithRetry(fetchUrl, 3, 3000);
+
+      if (!fetchResponse.data?.status === 200 || !fetchResponse.data?.response) {
+        return await sock.sendMessage(chatId, {
+          text: "❌ *Download failed!*\nThe API couldn't fetch the audio. Try again later."
+        }, { quoted: message });
+      }
+
+      const audioUrl = fetchResponse.data.response; // Direct MP3 URL (for seevn engine)
+
+      // Fetch cover image as buffer (if available)
+      let thumbnailBuffer = null;
+      if (coverImageUrl) {
         try {
-          const imgRes = await axios.get(thumbnail, { responseType: 'arraybuffer', timeout: 10000 });
-          thumbBuffer = Buffer.from(imgRes.data);
-        } catch (e) {}
+          await wait(1000); // Respect rate limits
+          const imgResponse = await axios.get(coverImageUrl, { 
+            responseType: 'arraybuffer',
+            timeout: 30000 
+          });
+          thumbnailBuffer = Buffer.from(imgResponse.data);
+        } catch (imgError) {
+          console.error('Failed to fetch cover image:', imgError.message);
+        }
       }
 
-      // Send audio
+      // Send audio file
       await sock.sendMessage(chatId, {
         audio: { url: audioUrl },
-        mimetype: 'audio/mpeg',
-        fileName: `${title} - ${artist}.mp3`,
+        mimetype: "audio/mpeg",
+        fileName: `${songTitle}.mp3`,
         contextInfo: {
           externalAdReply: {
-            title: title,
-            body: artist,
-            thumbnail: thumbBuffer,
+            title: songTitle,
+            body: 'Music', // Artist info not provided by new API
+            thumbnail: thumbnailBuffer,
             mediaType: 2,
-            mediaUrl: spotifyUrl,
-            sourceUrl: spotifyUrl
+            mediaUrl: '', // No Spotify URL anymore
+            sourceUrl: '' // Could add search URL if desired
           }
         }
       }, { quoted: message });
 
     } catch (error) {
-      console.error('Play (Akuari) error:', error.message);
+      console.error('Play Command Error:', error);
+      
+      let errorMsg = "❌ *Download failed!*\n\n";
+      
+      if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
+        errorMsg += "*Reason:* Connection timeout\nThe API took too long to respond.";
+      } else if (error.response?.status === 429) {
+        errorMsg += "*Reason:* Rate limit exceeded\nToo many requests. Please wait a minute and try again.";
+      } else if (error.response) {
+        errorMsg += `*Status:* ${error.response.status}\n*Error:* ${error.response.statusText}`;
+      } else {
+        errorMsg += `*Error:* ${error.message}`;
+      }
+      
+      errorMsg += "\n\n💡 *Tip:* Wait 10-15 seconds between requests to avoid rate limits.";
+
       await sock.sendMessage(chatId, {
-        text: "❌ *Download failed*\nPlease try .play2 or .play3 for alternative sources.",
-        ...channelInfo
+        text: errorMsg
       }, { quoted: message });
     }
   }
