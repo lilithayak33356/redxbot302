@@ -1,59 +1,68 @@
-const axios = require('axios');
-const settings = require('../settings'); // Adjust path if needed
+const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+const { Sticker, StickerTypes } = require('stickers-formatter');
 
 module.exports = {
-  command: 'stickers',
-  aliases: ['stickersearch', 'ssticker'],
+  command: 'sticker',
+  aliases: ['s', 'sk'],
   category: 'stickers',
-  description: 'Search for stickers using Tenor',
-  usage: '.stickers <search term>',
+  description: 'Create a sticker from an image or video',
+  usage: '.sticker (reply to image/video) [type]',
 
-  async handler(sock, message, args, context = {}) {
-    const chatId = context.chatId || message.key.remoteJid;
-    const text = args?.join(' ')?.trim();
+  async handler(sock, message, args, context) {
+    const { chatId, channelInfo } = context;
+    const quoted = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
 
-    // Auto-reaction: react with 👍 to the user's command message
-    await sock.sendMessage(chatId, { 
-      react: { 
-        text: '👍', 
-        key: message.key 
-      } 
-    });
-
-    if (!text) {
-      return await sock.sendMessage(chatId, { 
-        text: '*Provide a search term.*\nExample: .stickers funny' 
+    if (!quoted || !(quoted.imageMessage || quoted.videoMessage)) {
+      return await sock.sendMessage(chatId, {
+        text: '❌ Reply to an image or video.',
+        ...channelInfo
       }, { quoted: message });
     }
 
+    // Optional sticker type from args (default, full, circle, rounded, crop)
+    const typeArg = args[0]?.toLowerCase();
+    const typeMap = {
+      default: StickerTypes.DEFAULT,
+      full: StickerTypes.FULL,
+      circle: StickerTypes.CIRCLE,
+      rounded: StickerTypes.ROUNDED,
+      crop: StickerTypes.CROPPED
+    };
+    const stickerType = typeMap[typeArg] || StickerTypes.DEFAULT;
+
     try {
-      await sock.sendMessage(chatId, { 
-        text: 'Searching for stickers...' 
+      const mediaType = quoted.imageMessage ? 'image' : 'video';
+      const stream = await downloadContentFromMessage(
+        quoted.imageMessage || quoted.videoMessage,
+        mediaType
+      );
+
+      let buffer = Buffer.from([]);
+      for await (const chunk of stream) {
+        buffer = Buffer.concat([buffer, chunk]);
+      }
+
+      // Create sticker with stickers-formatter
+      const sticker = new Sticker(buffer, {
+        pack: 'REDX Stickers',
+        author: 'Abdul Rehman & Muzamil',
+        type: stickerType,
+        quality: 80,
+        categories: ['🤖', '✨']
+      });
+
+      const stickerBuffer = await sticker.toBuffer();
+
+      await sock.sendMessage(chatId, {
+        sticker: stickerBuffer,
+        ...channelInfo
       }, { quoted: message });
 
-      const { data } = await axios.get(`https://g.tenor.com/v1/search?q=${encodeURIComponent(text)}&key=LIVDSRZULELA&limit=8`);
-      if (!data?.results?.length) {
-        return await sock.sendMessage(chatId, { 
-          text: '❌ No stickers found.' 
-        }, { quoted: message });
-      }
-
-      const limit = Math.min(data.results.length, 5);
-      for (let i = 0; i < limit; i++) {
-        const media = data.results[i].media?.[0]?.mp4?.url;
-        if (!media) continue;
-        
-        // Send each sticker with a caption that includes owner name
-        await sock.sendMessage(chatId, { 
-          video: { url: media }, 
-          caption: `Sticker ${i + 1} | Owner: ${settings.botOwner || 'Abdul Rehman Rajpoot & Muzamil Khan'}`, 
-          mimetype: 'video/mp4' 
-        }, { quoted: message });
-      }
     } catch (error) {
-      console.error('StickerSearch plugin error:', error);
-      await sock.sendMessage(chatId, { 
-        text: '❌ Failed to fetch stickers.' 
+      console.error('Sticker creation error:', error);
+      await sock.sendMessage(chatId, {
+        text: '❌ Failed to create sticker.',
+        ...channelInfo
       }, { quoted: message });
     }
   }
