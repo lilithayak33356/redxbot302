@@ -20,13 +20,17 @@ RUN node -e "const fs = require('fs'); \
     if (pkg.devDependencies && pkg.devDependencies['discard-api']) delete pkg.devDependencies['discard-api']; \
     fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
 
-# Install dependencies without running scripts (postinstall will be run later)
-RUN npm install --force --loglevel=error --ignore-scripts
+# Set environment variables to force correct platform for sharp
+ENV npm_config_platform=linuxmusl
+ENV npm_config_arch=x64
 
-# Copy the rest of the application (including rebrand.js and datamain.txt)
+# Install dependencies (allow scripts to run so sharp's binary is downloaded)
+RUN npm install --force --loglevel=error
+
+# Copy the rest of the application
 COPY . .
 
-# Now run the postinstall script manually
+# Run rebrand.js (now all files are present)
 RUN node rebrand.js
 
 EXPOSE 3000
