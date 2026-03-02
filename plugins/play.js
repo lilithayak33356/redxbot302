@@ -1,157 +1,173 @@
+const yts = require('yt-search');
 const axios = require('axios');
+
+// Rate limiter to avoid API abuse
+const rateLimiter = {
+  queue: [],
+  processing: false,
+  lastRequest: 0,
+  minDelay: 1000, // 1 second between requests
+
+  async add(fn) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ fn, resolve, reject });
+      this.process();
+    });
+  },
+
+  async process() {
+    if (this.processing || this.queue.length === 0) return;
+    this.processing = true;
+    const { fn, resolve, reject } = this.queue.shift();
+    const now = Date.now();
+    const timeSinceLast = now - this.lastRequest;
+    if (timeSinceLast < this.minDelay) {
+      await new Promise(r => setTimeout(r, this.minDelay - timeSinceLast));
+    }
+    this.lastRequest = Date.now();
+    try {
+      const result = await fn();
+      resolve(result);
+    } catch (err) {
+      reject(err);
+    }
+    this.processing = false;
+    this.process();
+  }
+};
+
+async function fetchWithRetry(url, maxRetries = 3, baseDelay = 2000) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await axios.get(url, { timeout: 30000 });
+      if (response.status === 429) {
+        const retryAfter = response.headers['retry-after'] ? parseInt(response.headers['retry-after']) * 1000 : baseDelay * attempt;
+        if (attempt < maxRetries) {
+          console.log(`Rate limited. Retrying in ${retryAfter}ms...`);
+          await new Promise(r => setTimeout(r, retryAfter));
+          continue;
+        }
+        throw new Error('Rate limit exceeded');
+      }
+      if (response.status >= 400) throw new Error(`API error: ${response.status}`);
+      return response.data;
+    } catch (err) {
+      if (attempt === maxRetries) throw err;
+      const delay = baseDelay * Math.pow(2, attempt - 1);
+      console.log(`Attempt ${attempt} failed. Retrying in ${delay}ms...`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+}
 
 module.exports = {
   command: 'play',
-  aliases: ['plays', 'music'],
+  aliases: ['song', 'mp3'],
   category: 'music',
-  description: 'Search and download a song as MP3 from the new music API',
-  usage: '.play <song name>',
-  
+  description: 'Download a song from YouTube (MP3)',
+  usage: '.play <song name or YouTube link>',
+
   async handler(sock, message, args, context = {}) {
-    const chatId = context.chatId || message.key.remoteJid;
-    const searchQuery = args.join(' ').trim();
+    const { chatId, channelInfo } = context;
+    const query = args.join(' ').trim();
 
-    // Helper function to wait
-    const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-    // Helper function for API calls with retry logic
-    const apiCallWithRetry = async (url, maxRetries = 3, baseDelay = 2000) => {
-      for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-          // Add delay before each request to respect rate limits
-          await wait(1000);
-          
-          const response = await axios.get(url, { 
-            timeout: 45000,
-            headers: {
-              'User-Agent': 'Mozilla/5.0'
-            }
-          });
-          
-          return response;
-        } catch (error) {
-          const isRateLimited = error.response?.status === 429 || 
-                               error.code === 'ECONNABORTED' ||
-                               error.code === 'ETIMEDOUT';
-          
-          if (attempt === maxRetries) {
-            throw error;
-          }
-
-          if (isRateLimited) {
-            // Exponential backoff for rate limiting
-            const delay = baseDelay * Math.pow(2, attempt - 1);
-            console.log(`Rate limited or timeout. Retrying in ${delay}ms... (Attempt ${attempt}/${maxRetries})`);
-            await wait(delay);
-          } else {
-            throw error;
-          }
-        }
-      }
-    };
+    if (!query) {
+      return await sock.sendMessage(chatId, {
+        text: '🎵 *Song Downloader*\n\nUsage:\n.play <song name | YouTube link>',
+        ...channelInfo
+      }, { quoted: message });
+    }
 
     try {
-      if (!searchQuery) {
-        return await sock.sendMessage(chatId, {
-          text: "*Which song do you want to play?*\nUsage: .play <song name>"
-        }, { quoted: message });
+      let video, videoUrl;
+      
+      // Check if query is a YouTube link
+      if (query.includes('youtube.com') || query.includes('youtu.be')) {
+        // Extract video ID
+        const videoId = extractVideoId(query);
+        if (!videoId) throw new Error('Invalid YouTube link');
+        const searchResult = await yts({ videoId });
+        video = searchResult;
+        videoUrl = query;
+      } else {
+        // Search by keyword
+        const searchResult = await yts(query);
+        if (!searchResult?.videos?.length) {
+          return await sock.sendMessage(chatId, {
+            text: '❌ No results found. Please try a different search term.',
+            ...channelInfo
+          }, { quoted: message });
+        }
+        video = searchResult.videos[0];
+        videoUrl = video.url;
       }
 
+      // Send thumbnail and info
       await sock.sendMessage(chatId, {
-        text: "🔍 *Searching for your song...*"
+        image: { url: video.thumbnail },
+        caption: `🎶 *${video.title}*\n⏱️ Duration: ${video.timestamp || 'N/A'}`,
+        ...channelInfo
       }, { quoted: message });
 
-      // ------------------------------------------------------------
-      // NEW API IMPLEMENTATION (as of 8th June 2025)
-      // Search using the specified engine (seevn returns direct MP3)
-      // ------------------------------------------------------------
-      const searchEngine = 'seevn'; // You can change this to: gaama, seevn, hunjama, mtmusic, wunk
-      const searchUrl = `https://musicapi.x007.workers.dev/search?q=${encodeURIComponent(searchQuery)}&searchEngine=${searchEngine}`;
-      const searchResponse = await apiCallWithRetry(searchUrl);
-
-      // Check if search was successful and returned results
-      if (!searchResponse.data?.status === 200 || !searchResponse.data?.response?.length) {
-        return await sock.sendMessage(chatId, {
-          text: "❌ *No songs found!*\nTry a different search term or engine."
-        }, { quoted: message });
-      }
-
-      const topResult = searchResponse.data.response[0];
-      const songId = topResult.id;
-      const songTitle = topResult.title;
-      const coverImageUrl = topResult.img; // Cover image URL
-
       await sock.sendMessage(chatId, {
-        text: `✅ *Found!*\n\n🎵 *Song:* ${songTitle}\n\n⏳ *Downloading...*`
+        text: '⏳ Downloading... Please wait.',
+        ...channelInfo
       }, { quoted: message });
 
-      // Wait before making download request to respect rate limits
-      await wait(1500);
+      // Download using the loader API
+      const downloadUrl = `https://api.qasimdev.dpdns.org/api/loaderto/download?apiKey=qasim-dev&format=mp3&url=${encodeURIComponent(videoUrl)}`;
+      const downloadData = await rateLimiter.add(() => fetchWithRetry(downloadUrl));
 
-      // Fetch the actual audio file URL
-      const fetchUrl = `https://musicapi.x007.workers.dev/fetch?id=${songId}`;
-      const fetchResponse = await apiCallWithRetry(fetchUrl, 3, 3000);
+      if (!downloadData?.downloadUrl) throw new Error('Download URL not found');
 
-      if (!fetchResponse.data?.status === 200 || !fetchResponse.data?.response) {
-        return await sock.sendMessage(chatId, {
-          text: "❌ *Download failed!*\nThe API couldn't fetch the audio. Try again later."
-        }, { quoted: message });
-      }
+      const audioUrl = downloadData.downloadUrl;
 
-      const audioUrl = fetchResponse.data.response; // Direct MP3 URL (for seevn engine)
-
-      // Fetch cover image as buffer (if available)
-      let thumbnailBuffer = null;
-      if (coverImageUrl) {
+      // Try to send audio (if fails, try alternative formats)
+      let sent = false;
+      const urlsToTry = [audioUrl, ...(downloadData.alternativeUrls || [])];
+      for (const url of urlsToTry) {
         try {
-          await wait(1000); // Respect rate limits
-          const imgResponse = await axios.get(coverImageUrl, { 
-            responseType: 'arraybuffer',
-            timeout: 30000 
-          });
-          thumbnailBuffer = Buffer.from(imgResponse.data);
-        } catch (imgError) {
-          console.error('Failed to fetch cover image:', imgError.message);
+          await sock.sendMessage(chatId, {
+            audio: { url },
+            mimetype: 'audio/mpeg',
+            fileName: `${video.title || 'song'}.mp3`,
+            ptt: false,
+            ...channelInfo
+          }, { quoted: message });
+          sent = true;
+          break;
+        } catch (e) {
+          console.log(`Failed to send from ${url}:`, e.message);
+          continue;
         }
       }
 
-      // Send audio file
-      await sock.sendMessage(chatId, {
-        audio: { url: audioUrl },
-        mimetype: "audio/mpeg",
-        fileName: `${songTitle}.mp3`,
-        contextInfo: {
-          externalAdReply: {
-            title: songTitle,
-            body: 'Music', // Artist info not provided by new API
-            thumbnail: thumbnailBuffer,
-            mediaType: 2,
-            mediaUrl: '', // No Spotify URL anymore
-            sourceUrl: '' // Could add search URL if desired
-          }
-        }
-      }, { quoted: message });
+      if (!sent) throw new Error('All download URLs failed');
 
     } catch (error) {
       console.error('Play Command Error:', error);
-      
-      let errorMsg = "❌ *Download failed!*\n\n";
-      
-      if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
-        errorMsg += "*Reason:* Connection timeout\nThe API took too long to respond.";
-      } else if (error.response?.status === 429) {
-        errorMsg += "*Reason:* Rate limit exceeded\nToo many requests. Please wait a minute and try again.";
-      } else if (error.response) {
-        errorMsg += `*Status:* ${error.response.status}\n*Error:* ${error.response.statusText}`;
-      } else {
-        errorMsg += `*Error:* ${error.message}`;
-      }
-      
-      errorMsg += "\n\n💡 *Tip:* Wait 10-15 seconds between requests to avoid rate limits.";
+      let errorMsg = '❌ Failed to download song.\n';
+      if (error.message.includes('rate limit')) errorMsg += 'Rate limit exceeded. Please try again later.';
+      else if (error.message.includes('timeout')) errorMsg += 'Download timed out. Try a shorter video.';
+      else errorMsg += 'Service is busy. Please try again in a minute.';
 
       await sock.sendMessage(chatId, {
-        text: errorMsg
+        text: errorMsg,
+        ...channelInfo
       }, { quoted: message });
     }
   }
 };
+
+// Helper to extract video ID from YouTube URL
+function extractVideoId(url) {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/,
+    /^([a-zA-Z0-9_-]{11})$/
+  ];
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
+}
