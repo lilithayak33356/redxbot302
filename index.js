@@ -503,7 +503,7 @@ async function startBot() {
                 
                 console.log(chalk.yellow(`🌿 Connected to => ` + JSON.stringify(sock.user, null, 2)));
 
-                // ==================== SEND WELCOME IMAGE TO BOT'S OWN CHAT ====================
+                // ==================== SEND WELCOME IMAGE AND AUDIO TO BOT'S OWN CHAT ====================
                 try {
                     const botNumber = sock.user.id.split(':')[0] + '@s.whatsapp.net';
                     const welcomeCaption = `╔══════『 *${settings.botName}* 』══════╗\n\n` +
@@ -515,10 +515,24 @@ async function startBot() {
                         `⭐ *GitHub:* ${settings.githubRepo}\n\n` +
                         `✨ *Thank you for using REDXBOT!* ✨`;
 
+                    // Send welcome image
                     const response = await axios.get(settings.botDp, { responseType: 'arraybuffer' });
                     const buffer = Buffer.from(response.data, 'binary');
                     await sock.sendMessage(botNumber, { image: buffer, caption: welcomeCaption });
-                    printLog('success', 'Welcome image sent to bot.');
+
+                    // Send welcome audio if URL provided
+                    if (settings.welcomeAudio) {
+                        try {
+                            await sock.sendMessage(botNumber, {
+                                audio: { url: settings.welcomeAudio },
+                                mimetype: 'audio/mpeg',
+                                ptt: true // send as voice note
+                            });
+                        } catch (audioErr) {
+                            printLog('error', 'Failed to send welcome audio:', audioErr.message);
+                        }
+                    }
+                    printLog('success', 'Welcome image and audio sent to bot.');
                 } catch (err) {
                     printLog('error', 'Failed to send welcome image:', err.message);
                     // Fallback text
