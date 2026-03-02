@@ -1,57 +1,66 @@
-const handler = require('../lib/commandHandler');
 const settings = require('../settings');
-const axios = require('axios');
-
-function formatUptime(seconds) {
-    const days = Math.floor(seconds / 86400);
-    seconds %= 86400;
-    const hours = Math.floor(seconds / 3600);
-    seconds %= 3600;
-    const minutes = Math.floor(seconds / 60);
-    seconds = Math.floor(seconds % 60);
-    return `${days}d ${hours}h ${minutes}m ${seconds}s`;
-}
+const commandHandler = require('../lib/commandHandler');
 
 module.exports = {
-    command: 'menu',
-    aliases: ['help', 'cmds'],
-    category: 'info',
-    description: 'Show all available commands',
-    async handler(sock, message, args, context) {
-        const chatId = context.chatId || message.key.remoteJid;
-        await sock.sendMessage(chatId, { react: { text: '📋', key: message.key } });
+  command: 'menu',
+  aliases: ['help', 'cmd'],
+  category: 'main',
+  description: 'Show all available commands',
+  usage: '.menu [category]',
+  
+  async handler(sock, message, args, context) {
+    const { chatId, channelInfo } = context;
+    const category = args[0]?.toLowerCase();
 
-        const uptime = process.uptime();
-        const categories = {};
-        handler.commands.forEach((plugin, cmd) => {
-            const cat = plugin.category || 'misc';
-            if (!categories[cat]) categories[cat] = [];
-            categories[cat].push(`.${cmd}`);
+    if (category) {
+      // Show commands of a specific category
+      const commands = commandHandler.getCommandsByCategory(category);
+      if (!commands || commands.length === 0) {
+        return await sock.sendMessage(chatId, {
+          text: `❌ No commands found in category *${category}*`,
+          ...channelInfo
+        }, { quoted: message });
+      }
+
+      let text = `╔═══《 *${category.toUpperCase()}* 》═══╗\n\n`;
+      commands.forEach(cmd => {
+        const cmdObj = commandHandler.commands.get(cmd);
+        text += `║ ✦ *${cmd}* : ${cmdObj?.description || 'No description'}\n`;
+      });
+      text += `\n╚════════════════════╝\n\n📌 *Total: ${commands.length} commands*`;
+
+      await sock.sendMessage(chatId, {
+        text,
+        ...channelInfo
+      }, { quoted: message });
+    } else {
+      // Show all categories with command counts
+      const categories = Array.from(commandHandler.categories.keys());
+      let text = `╔═══《 *${settings.botName} MENU* 》═══╗\n\n`;
+      text += `║ *Owner:* Abdul Rehman Rajpoot & Muzamil Khan\n`;
+      text += `║ *Prefix:* ${settings.prefixes.join(', ')}\n`;
+      text += `║ *Total Commands:* ${commandHandler.commands.size}\n\n`;
+
+      categories.sort().forEach(cat => {
+        const cmdList = commandHandler.getCommandsByCategory(cat);
+        text += `╠═══《 *${cat.toUpperCase()}* 》═══╣\n`;
+        cmdList.slice(0, 5).forEach(cmd => {
+          text += `║ ✦ *${cmd}*\n`;
         });
-
-        let menuText = `╔══════『 *${settings.botName}* 』══════╗\n`;
-        menuText += `┃ ✨ *Uptime:* ${formatUptime(uptime)}\n`;
-        menuText += `┃ 🔧 *Prefix:* ${settings.prefixes.join(', ')}\n`;
-        menuText += `┃ 📦 *Commands:* ${handler.commands.size}\n`;
-        menuText += `┃━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-
-        for (const [cat, cmds] of Object.entries(categories)) {
-            menuText += `┃ 🔹 *${cat.toUpperCase()}*\n`;
-            cmds.forEach(cmd => {
-                menuText += `┃    ${cmd}\n`;
-            });
+        if (cmdList.length > 5) {
+          text += `║ ... and ${cmdList.length - 5} more\n`;
         }
+        text += `║ 📌 *Total: ${cmdList.length}*\n\n`;
+      });
 
-        menuText += `╚══════════════════════════╝\n\n`;
-        menuText += `✨ *Powered by ${settings.botOwner} & ${settings.secondOwner}* ✨\n`;
-        menuText += `🔗 Join Channel: ${settings.channelLink}`;
+      text += `╚══════════════════════════╝\n\n`;
+      text += `📌 *Use .menu <category> to see full category*\n`;
+      text += `🔗 *Channel:* ${settings.channelLink}`;
 
-        try {
-            const response = await axios.get(settings.botDp, { responseType: 'arraybuffer' });
-            const buffer = Buffer.from(response.data, 'binary');
-            await sock.sendMessage(chatId, { image: buffer, caption: menuText }, { quoted: message });
-        } catch (e) {
-            await sock.sendMessage(chatId, { text: menuText }, { quoted: message });
-        }
+      await sock.sendMessage(chatId, {
+        text,
+        ...channelInfo
+      }, { quoted: message });
     }
+  }
 };
