@@ -3,31 +3,33 @@ const settings = require("../settings");
 const fs = require('fs');
 const path = require('path');
 
+// Emoji definitions (keep as in your original)
 const menuEmojis = ['✨', '🌟', '⭐', '💫', '🎯', '🎨', '🎪', '🎭'];
 const activeEmojis = ['✅', '🟢', '💚', '✔️', '☑️'];
 const disabledEmojis = ['❌', '🔴', '⛔', '🚫', '❎'];
-const fastEmojis = ['⚡', '🚀', '💨', '⏱️', '🔥'];
+const fastEmojis = ['⚡', '🚀', '💨', '⏩', '🔥'];
 const slowEmojis = ['🐢', '🐌', '⏳', '⌛', '🕐'];
+
 const categoryEmojis = {
     general: ['📱', '🔧', '⚙️', '🛠️'],
-    owner: ['👑', '🔱', '💎', '🎖️'],
-    admin: ['🛡️', '⚔️', '🔐', '👮'],
-    group: ['👥', '👫', '🧑‍🤝‍🧑', '👨‍👩‍👧‍👦'],
-    download: ['📥', '⬇️', '💾', '📦'],
-    ai: ['🤖', '🧠', '💭', '🎯'],
+    owner: ['👑', '🔐', '💎', '👤'],
+    admin: ['🛡️', '⚔️', '🔰', '👮'],
+    group: ['👥', '🗣️', '📢', '👪'],
+    download: ['📥', '⬇️', '💾', '📀'],
+    ai: ['🤖', '🧠', '💭', '🤯'],
     search: ['🔍', '🔎', '🕵️', '📡'],
-    apks: ['📲', '📦', '💿', '🗂️'],
-    info: ['ℹ️', '📋', '📊', '📄'],
-    fun: ['🎮', '🎲', '🎰', '🎪'],
-    stalk: ['👀', '🔭', '🕵️', '🎯'],
-    games: ['🎮', '🕹️', '🎯', '🏆'],
+    apks: ['📱', '📲', '🤖', '📦'],
+    info: ['ℹ️', '📋', '📊', '📝'],
+    fun: ['🎉', '🎊', '🎈', '🎠'],
+    stalk: ['👀', '🕵️', '🔭', '👁️'],
+    games: ['🎮', '🕹️', '🎲', '♟️'],
     images: ['🖼️', '📸', '🎨', '🌄'],
-    menu: ['📜', '📋', '📑', '📚'],
-    tools: ['🔨', '🔧', '⚡', '🛠️'],
-    stickers: ['🎭', '😀', '🎨', '🖼️'],
-    quotes: ['💬', '📖', '✍️', '💭'],
+    menu: ['📜', '📋', '📑', '📄'],
+    tools: ['🔨', '🔧', '⚒️', '🛠️'],
+    stickers: ['🎭', '🎨', '🖼️', '😀'],
+    quotes: ['💬', '🗨️', '📝', '💭'],
     music: ['🎵', '🎶', '🎧', '🎤'],
-    utility: ['📂', '🔧', '⚙️', '🛠️']
+    utility: ['📐', '⚖️', '🔬', '🧪']
 };
 
 function getRandomEmoji(arr) {
@@ -35,7 +37,7 @@ function getRandomEmoji(arr) {
 }
 
 function getCategoryEmoji(category) {
-    const emojis = categoryEmojis[category.toLowerCase()] || ['📂', '📁', '🗂️', '📋'];
+    const emojis = categoryEmojis[category.toLowerCase()] || ['📂', '📁', '🗂️', '📎'];
     return getRandomEmoji(emojis);
 }
 
@@ -52,7 +54,7 @@ function formatTime() {
 
 module.exports = {
   command: 'smenu',
-  aliases: ['shelp', 'smart', 'menu', 'help'],
+  aliases: ['shelp', 'smart'], // removed 'menu' and 'help'
   category: 'general',
   description: 'Interactive smart menu with live status',
   usage: '.smenu',
@@ -76,14 +78,14 @@ module.exports = {
       const slowEmoji = getRandomEmoji(slowEmojis);
 
       let menuText = `${menuEmoji} *${settings.botName || 'REDXBOT302'}* ${menuEmoji}\n\n`;
-      menuText += `┏━━━━━━━━━━━━━━━━┓\n`;
+      menuText += `┏━━━━━━━━━━━━━━━━━━━━┓\n`;
       menuText += `┃ 📱 *Bot:* ${settings.botName || 'REDXBOT302'}\n`;
       menuText += `┃ 🔖 *Version:* ${settings.version || '1.0.0'}\n`;
       menuText += `┃ 👤 *Owner:* ${settings.botOwner || 'Unknown'}\n`;
       menuText += `┃ ⏰ *Time:* ${formatTime()}\n`;
       menuText += `┃ ℹ️ *Prefix:* ${settings.prefixes ? settings.prefixes.join(', ') : '.'}\n`;
       menuText += `┃ 📊 *Plugins:* ${CommandHandler.commands.size}\n`;
-      menuText += `┗━━━━━━━━━━━━━━━━┛\n\n`;
+      menuText += `┗━━━━━━━━━━━━━━━━━━━━┛\n\n`;
 
       const topCmds = stats.slice(0, 3).filter(s => s.usage > 0);
       if (topCmds.length > 0) {
@@ -98,7 +100,7 @@ module.exports = {
       for (const cat of categories) {
         const catEmoji = getCategoryEmoji(cat);
         menuText += `${catEmoji} *${cat.toUpperCase()}*\n`;
-        menuText += `┌─────────────────\n`;
+        menuText += `┌──────────────────\n`;
         
         const catCmds = CommandHandler.getCommandsByCategory(cat);
         
@@ -123,13 +125,13 @@ module.exports = {
         menuText += `\n`;
       }
 
-      menuText += `┌────────────────\n`;
+      menuText += `┌──────────────────\n`;
       menuText += `├  💡 *LEGEND*\n`;
       menuText += `├─ ${activeEmoji} Active Command\n`;
       menuText += `├─ ${disabledEmoji} Disabled Command\n`;
       menuText += `├─ ${fastEmoji} Fast Response\n`;
       menuText += `├─ ${slowEmoji} Slow Response\n`;
-      menuText += `⁠└────────────────`;
+      menuText += `└──────────────────`;
 
       const messageOptions = {
         image: thumbnail,
@@ -138,7 +140,7 @@ module.exports = {
           forwardingScore: 1,
           isForwarded: true,
           forwardedNewsletterMessageInfo: {
-            newsletterJid: '120363319098372999@newsletter',
+            newsletterJid: 'JID: 120363405513439052@newsletter',
             newsletterName: settings.botName || 'REDXBOT302',
             serverMessageId: -1
           }
