@@ -1,4 +1,15 @@
 const axios = require('axios');
+const https = require('https');
+
+// List of user agents to rotate
+const USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+];
+
+// Optional: proxy list (if you have access to proxies)
+const PROXIES = []; // leave empty if no proxies
 
 module.exports = {
     command: 'simdatabase',
@@ -17,78 +28,68 @@ module.exports = {
 
         await sock.sendMessage(chatId, { text: '⏳ Fetching SIM database info...' }, { quoted: message });
 
-        try {
-            const api = `https://fam-official.serv00.net/api/database.php?number=${number}`;
-            const response = await axios.get(api, { 
-                timeout: 15000,
-                headers: { 'User-Agent': 'Mozilla/5.0' } // sometimes helps avoid blocks
-            });
-            
-            // Log the full response for debugging (remove in production)
-            console.log('SIM API response:', JSON.stringify(response.data, null, 2));
+        // Try multiple APIs in case one is blocked
+        const apis = [
+            { url: `https://fam-official.serv00.net/api/database.php?number=${number}`, name: 'Primary' },
+            { url: `https://api.pakdata.com/v1/sim?number=${number}`, name: 'Secondary' }, // placeholder
+            { url: `https://cnic.simowner.pk/api?number=${number}`, name: 'Tertiary' } // placeholder
+        ];
 
-            const data = response.data;
-
-            // Check if data is a string (maybe HTML error page)
-            if (typeof data === 'string') {
-                if (data.includes('404') || data.includes('Not Found')) {
-                    throw new Error('API endpoint not found (404)');
-                }
-                // Try to see if it's JSON inside a string
-                try {
-                    const parsed = JSON.parse(data);
-                    if (parsed && (parsed.status === 'success' || parsed.number)) {
-                        // Use parsed data
-                        return sendResult(sock, chatId, parsed, message);
-                    }
-                } catch (e) {
-                    // Not JSON, just show the string as error
-                    throw new Error(`API returned non-JSON: ${data.substring(0, 200)}`);
-                }
-            }
-
-            // If data is an object, try to extract info
-            if (data && typeof data === 'object') {
-                // Try common field names
-                const result = {
-                    number: data.number || data.phone || data.mobile || number,
-                    cnic: data.cnic || data.cnic_no || data.cnicNumber || data.id || 'N/A',
-                    name: data.name || data.owner || data.full_name || data.person || 'N/A',
-                    address: data.address || data.addr || data.location || 'N/A',
-                    network: data.network || data.operator || data.carrier || data.provider || 'N/A'
+        for (const api of apis) {
+            try {
+                const randomUserAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+                const axiosConfig = {
+                    timeout: 15000,
+                    headers: {
+                        'User-Agent': randomUserAgent,
+                        'Accept': 'application/json, text/html, */*',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Referer': 'https://www.google.com/',
+                        'Origin': 'https://www.google.com',
+                        'DNT': '1',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1'
+                    },
+                    httpsAgent: new https.Agent({ rejectUnauthorized: false }) // ignore SSL errors if any
                 };
 
-                // If at least one field has data, show it
-                if (result.name !== 'N/A' || result.cnic !== 'N/A') {
-                    let reply = `📱 *SIM Database Result*\n\n`;
-                    reply += `📞 *Number:* ${result.number}\n`;
-                    reply += `🆔 *CNIC:* ${result.cnic}\n`;
-                    reply += `👤 *Name:* ${result.name}\n`;
-                    reply += `📍 *Address:* ${result.address}\n`;
-                    reply += `📡 *Network:* ${result.network}`;
-                    return await sock.sendMessage(chatId, { text: reply }, { quoted: message });
+                // If proxies are available, pick one randomly
+                if (PROXIES.length > 0) {
+                    const proxy = PROXIES[Math.floor(Math.random() * PROXIES.length)];
+                    axiosConfig.proxy = proxy;
                 }
-            }
 
-            // If we reach here, no useful data found
-            throw new Error('No SIM data found for this number');
-
-        } catch (error) {
-            console.error('SIM database error:', error.message);
-            let errorMsg = '❌ SIM database lookup failed.\n';
-            if (error.response) {
-                errorMsg += `API returned ${error.response.status}`;
-                if (error.response.status === 403) {
-                    errorMsg += ' – access forbidden. The service may be down or blocked.';
-                } else if (error.response.status === 404) {
-                    errorMsg += ' – endpoint not found.';
+                const response = await axios.get(api.url, axiosConfig);
+                
+                const contentType = response.headers['content-type'] || '';
+                if (contentType.includes('application/json')) {
+                    const data = response.data;
+                    if (data && (data.status === 'success' || data.number || data.cnic)) {
+                        let reply = `📱 *SIM Database Result (${api.name})*\n\n`;
+                        reply += `📞 *Number:* ${data.number || number}\n`;
+                        reply += `🆔 *CNIC:* ${data.cnic || data.cnic_no || data.id || 'N/A'}\n`;
+                        reply += `👤 *Name:* ${data.name || data.owner || 'N/A'}\n`;
+                        reply += `📍 *Address:* ${data.address || data.addr || 'N/A'}\n`;
+                        reply += `📡 *Network:* ${data.network || data.operator || 'N/A'}`;
+                        return await sock.sendMessage(chatId, { text: reply }, { quoted: message });
+                    }
+                } else {
+                    // If HTML, check if it's a captcha page
+                    const html = response.data;
+                    if (html.includes('captcha') || html.includes('bot')) {
+                        console.log(`API ${api.name} returned bot page, trying next...`);
+                        continue; // try next API
+                    }
                 }
-            } else if (error.request) {
-                errorMsg += 'No response from server. The service might be offline.';
-            } else {
-                errorMsg += error.message;
+            } catch (err) {
+                console.log(`API ${api.name} failed:`, err.message);
+                // continue to next API
             }
-            await sock.sendMessage(chatId, { text: errorMsg }, { quoted: message });
         }
+
+        // If all APIs failed
+        await sock.sendMessage(chatId, { 
+            text: '❌ All SIM database services are currently unavailable or protected.\nPlease try again later or use a different service.'
+        }, { quoted: message });
     }
 };
