@@ -20,7 +20,6 @@ const fetchJson = async (url, options) => {
 };
 
 // ==================== PLAY COMMAND (ORIGINAL) ====================
-//kingi
 module.exports = {
   command: 'play',
   aliases: ['song', 'mp3'],
@@ -84,7 +83,6 @@ module.exports = {
 };
 
 // ==================== PLAY2 COMMAND (WITH FALLBACK URLs) ====================
-//kingi
 module.exports = {
   command: 'play2',
   aliases: ['song2', 'mp3fallback'],
