@@ -1,65 +1,57 @@
-const fs = require('fs');
-const path = require('path');
+// plugins/botdp.js
+const axios = require('axios');
 const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
-const crypto = require('crypto');
-const settings = require('../settings');
-const isOwnerOrSudo = require('../lib/isOwner'); // adjust path as needed
 
 module.exports = {
   command: 'botdp',
-  aliases: ['setdp', 'setprofile'],
+  aliases: ['setdp'],
   category: 'owner',
-  description: 'Change bot profile picture (reply to an image)',
-  usage: '.botdp (reply to an image)',
-  ownerOnly: true, // ensures only owner/sudo can use
-
+  description: 'Change bot profile picture (reply to image or URL)',
+  usage: '.botdp <reply to image> or .botdp <image URL>',
+  
   async handler(sock, message, args, context) {
-    const { chatId, channelInfo, senderId, isOwnerOrSudoCheck } = context;
-
-    // Security check (already enforced by ownerOnly flag, but double-check)
-    if (!isOwnerOrSudoCheck) {
-      return await sock.sendMessage(chatId, {
-        text: '❌ Only the bot owner can change the profile picture.',
-        ...channelInfo
-      }, { quoted: message });
+    // Only allow the bot's own messages
+    if (!message.key.fromMe) {
+      return;
     }
 
-    // Get the quoted message
+    const { chatId } = context;
+    let imageBuffer;
+
+    // Check if replying to an image
     const quoted = message.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-    if (!quoted || !quoted.imageMessage) {
+    if (quoted?.imageMessage) {
+      const stream = await downloadContentFromMessage(quoted.imageMessage, 'image');
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      imageBuffer = Buffer.concat(chunks);
+    }
+    // Check if URL provided
+    else if (args[0] && (args[0].startsWith('http://') || args[0].startsWith('https://'))) {
+      try {
+        const response = await axios.get(args[0], { responseType: 'arraybuffer' });
+        imageBuffer = Buffer.from(response.data);
+      } catch {
+        return await sock.sendMessage(chatId, {
+          text: '❌ Failed to fetch image from URL.'
+        }, { quoted: message });
+      }
+    }
+    else {
       return await sock.sendMessage(chatId, {
-        text: '❌ Please reply to an image you want to set as bot profile picture.',
-        ...channelInfo
+        text: '❌ Please reply to an image or provide an image URL.'
       }, { quoted: message });
     }
 
     try {
-      // Download the image
-      const stream = await downloadContentFromMessage(quoted.imageMessage, 'image');
-      let buffer = Buffer.from([]);
-      for await (const chunk of stream) {
-        buffer = Buffer.concat([buffer, chunk]);
-      }
-
-      // Save temporarily (optional, for logging)
-      const tempPath = path.join(__dirname, '../temp', `${crypto.randomBytes(6).toString('hex')}.jpg`);
-      fs.writeFileSync(tempPath, buffer);
-
-      // Update profile picture using Baileys method
-      await sock.updateProfilePicture(sock.user.id, buffer);
-
-      // Clean up temp file
-      fs.unlinkSync(tempPath);
-
+      await sock.updateProfilePicture(sock.user.id, imageBuffer);
       await sock.sendMessage(chatId, {
-        text: '✅ Bot profile picture updated successfully!',
-        ...channelInfo
+        text: '✅ Profile picture updated successfully!'
       }, { quoted: message });
     } catch (error) {
-      console.error('Error changing bot DP:', error);
+      console.error('BotDP error:', error);
       await sock.sendMessage(chatId, {
-        text: `❌ Failed to change profile picture: ${error.message}`,
-        ...channelInfo
+        text: `❌ Failed: ${error.message}`
       }, { quoted: message });
     }
   }
