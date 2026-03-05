@@ -6,26 +6,37 @@ module.exports = {
   command: 'drama',
   aliases: ['dramadl', 'watchdrama'],
   category: 'download',
-  description: 'Search and download dramas/videos',
-  usage: '.drama <name> [result number]',
+  description: 'Search and download dramas/videos (mp3 or mp4)',
+  usage: '.drama <name> [result number] [mp3/mp4]',
   
   async handler(sock, message, args, context) {
     const { chatId, channelInfo } = context;
     
     if (args.length === 0) {
       return await sock.sendMessage(chatId, {
-        text: `🎬 *Drama Downloader*\n\nUsage:\n.drama <drama name> [result number]\n\nExample: .drama sher ep1\nExample with number: .drama sher ep1 2`,
+        text: `🎬 *Drama Downloader*\n\nUsage:\n.drama <drama name> [result number] [mp3/mp4]\n\nExamples:\n.drama sher ep1\n.drama sher ep1 2\n.drama sher ep1 2 mp3`,
         ...channelInfo
       }, { quoted: message });
     }
 
+    // Parse arguments: last could be format, second-last could be index
+    let format = 'mp4'; // default
     let index = 1;
     let query = args.join(' ');
-    const lastArg = args[args.length - 1];
-    if (!isNaN(lastArg) && args.length > 1) {
-      index = parseInt(lastArg);
-      query = args.slice(0, -1).join(' ');
+
+    const last = args[args.length - 1].toLowerCase();
+    if (last === 'mp3' || last === 'mp4') {
+      format = last;
+      args.pop(); // remove format
     }
+
+    const secondLast = args[args.length - 1];
+    if (args.length > 1 && !isNaN(secondLast)) {
+      index = parseInt(secondLast);
+      args.pop(); // remove index
+    }
+
+    query = args.join(' '); // remaining is the search query
 
     await sock.sendPresenceUpdate('composing', chatId);
     await sock.sendMessage(chatId, {
@@ -34,13 +45,12 @@ module.exports = {
     }, { quoted: message });
 
     try {
-      // Step 1: Search using the API
+      // Step 1: Search
       const searchUrl = `https://jawad-tech.vercel.app/search/youtube?q=${encodeURIComponent(query)}`;
       const searchRes = await axios.get(searchUrl, { timeout: 15000 });
 
-      // Check API response status
       if (!searchRes.data?.status || !searchRes.data?.result) {
-        throw new Error('Invalid API response');
+        throw new Error('Invalid search API response');
       }
 
       const results = searchRes.data.result;
@@ -51,7 +61,6 @@ module.exports = {
         }, { quoted: message });
       }
 
-      // Validate index
       if (index < 1 || index > results.length) {
         return await sock.sendMessage(chatId, {
           text: `❌ Invalid number. Use 1-${results.length}`,
@@ -60,7 +69,7 @@ module.exports = {
       }
 
       const selected = results[index - 1];
-      const videoUrl = selected.link; // Direct YouTube link from API
+      const videoUrl = selected.link;
       const title = selected.title;
       const channel = selected.channel;
       const duration = selected.duration;
@@ -68,7 +77,7 @@ module.exports = {
 
       // Show selected item info
       await sock.sendMessage(chatId, {
-        text: `✅ *Selected:*\n\n📌 *${title}*\n📺 ${channel}\n⏱️ ${duration}\n\n⏳ Fetching download...`,
+        text: `✅ *Selected:*\n\n📌 *${title}*\n📺 ${channel}\n⏱️ ${duration}\n\n⏳ Fetching ${format.toUpperCase()} download...`,
         ...channelInfo
       }, { quoted: message });
 
@@ -76,37 +85,56 @@ module.exports = {
       const downloadApiUrl = `https://jawad-tech.vercel.app/download/ytdl?url=${encodeURIComponent(videoUrl)}`;
       const dlRes = await axios.get(downloadApiUrl, { timeout: 60000 });
 
-      // Parse download response (common fields)
-      let videoDlUrl = dlRes.data?.downloadUrl || dlRes.data?.url || dlRes.data?.link || dlRes.data?.video;
-      if (!videoDlUrl && typeof dlRes.data === 'string' && dlRes.data.startsWith('http')) {
-        videoDlUrl = dlRes.data;
+      // Parse download response – it has result.mp3 and result.mp4
+      if (!dlRes.data?.status || !dlRes.data?.result) {
+        throw new Error('Invalid download API response');
       }
 
-      if (!videoDlUrl) {
-        throw new Error('Could not extract download URL');
+      const downloadUrl = dlRes.data.result[format]; // mp3 or mp4 field
+      if (!downloadUrl) {
+        throw new Error(`No ${format} download available`);
       }
 
-      // Step 3: Send video
+      // Step 3: Send media (video for mp4, audio for mp3)
       const caption = `🎬 *${title}*\n📺 ${channel}\n⏱️ ${duration}\n\n📥 Downloaded via ${settings.botName}`;
       
-      const messageOptions = {
-        video: { url: videoDlUrl },
-        mimetype: 'video/mp4',
-        caption: caption,
-        contextInfo: {
-          externalAdReply: {
-            title: title.slice(0, 30),
-            body: channel,
-            thumbnailUrl: thumbnail,
-            mediaType: 2,
-            mediaUrl: videoDlUrl,
-            sourceUrl: videoUrl
+      let messageOptions;
+      if (format === 'mp4') {
+        messageOptions = {
+          video: { url: downloadUrl },
+          mimetype: 'video/mp4',
+          caption: caption,
+          contextInfo: {
+            externalAdReply: {
+              title: title.slice(0, 30),
+              body: channel,
+              thumbnailUrl: thumbnail,
+              mediaType: 2,
+              mediaUrl: downloadUrl,
+              sourceUrl: videoUrl
+            }
           }
-        },
-        ...channelInfo
-      };
+        };
+      } else {
+        // mp3 – send as audio
+        messageOptions = {
+          audio: { url: downloadUrl },
+          mimetype: 'audio/mpeg',
+          caption: caption,
+          contextInfo: {
+            externalAdReply: {
+              title: title.slice(0, 30),
+              body: channel,
+              thumbnailUrl: thumbnail,
+              mediaType: 2,
+              mediaUrl: downloadUrl,
+              sourceUrl: videoUrl
+            }
+          }
+        };
+      }
 
-      await sock.sendMessage(chatId, messageOptions, { quoted: message });
+      await sock.sendMessage(chatId, { ...messageOptions, ...channelInfo }, { quoted: message });
 
     } catch (error) {
       console.error('❌ Drama command error:', error);
