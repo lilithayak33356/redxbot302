@@ -1,16 +1,19 @@
 // plugins/pair.js
 const axios = require('axios');
 
+// Simple in‑memory rate limiting map (outside handler to persist)
+const rateLimit = new Map();
+
 module.exports = {
   command: 'pair',
   aliases: ['getcode', 'paircode'],
-  category: 'general',          // Public category so it shows in menu
+  category: 'general',
   description: 'Get WhatsApp pairing code (public)',
   usage: '.pair <phone_number> (e.g., .pair 61468259338)',
-  ownerOnly: false,             // Allow everyone to use
+  ownerOnly: false,
 
   async handler(sock, message, args, context) {
-    const { chatId } = context;   // No owner check needed
+    const { chatId } = context;
     const number = args[0]?.trim();
 
     if (!number) {
@@ -19,19 +22,16 @@ module.exports = {
       }, { quoted: message });
     }
 
-    // Basic validation: only digits allowed, no + or spaces
     if (!/^\d+$/.test(number)) {
       return await sock.sendMessage(chatId, {
         text: '❌ Invalid number. Use only digits (no +, spaces, or dashes).'
       }, { quoted: message });
     }
 
-    // Optional: Add simple rate limiting per user (basic in‑memory)
-    // This prevents spamming – adjust as needed
-    const rateLimit = new Map();
+    // Simple rate limiting: 10 seconds per chat
     const now = Date.now();
     const lastUsed = rateLimit.get(chatId);
-    if (lastUsed && now - lastUsed < 10000) { // 10 seconds cooldown
+    if (lastUsed && now - lastUsed < 10000) {
       return await sock.sendMessage(chatId, {
         text: '⏳ Please wait a few seconds before requesting another code.'
       }, { quoted: message });
@@ -46,24 +46,25 @@ module.exports = {
       const apiUrl = `https://redxmainpair-production-6606.up.railway.app/code?number=${number}`;
       const response = await axios.get(apiUrl, { timeout: 30000 });
 
-      // Handle different possible response formats
       const code = response.data?.code || response.data?.pairingCode;
-      if (code) {
-        await sock.sendMessage(chatId, {
-          text: `✅ *Pairing Code Generated*\n\n📱 Number: ${number}\n🔑 Code: ${code}\n\n⏱️ This code expires in 60 seconds.`
-        }, { quoted: message });
-      } else {
-        console.log('Unexpected API response:', response.data);
-        await sock.sendMessage(chatId, {
-          text: '❌ Backend returned an unexpected response. Please try again later.'
-        }, { quoted: message });
+      if (!code) {
+        throw new Error('No code in response');
       }
+
+      // First message: full info
+      await sock.sendMessage(chatId, {
+        text: `> *REDXBOT PAIRING COMPLETED*\n\nYour pairing code is: ${code}`
+      }, { quoted: message });
+
+      // Second message: only the code (clean)
+      await sock.sendMessage(chatId, {
+        text: code
+      }, { quoted: message });
+
     } catch (error) {
       console.error('Pair command error:', error.message);
-      
       let errorMsg = '❌ Failed to get pairing code.\n';
       if (error.response) {
-        // Server responded with an error status
         if (error.response.status === 400) {
           errorMsg += 'Invalid number format.';
         } else if (error.response.status === 429) {
@@ -76,7 +77,6 @@ module.exports = {
       } else {
         errorMsg += error.message;
       }
-      
       await sock.sendMessage(chatId, { text: errorMsg }, { quoted: message });
     }
   }
