@@ -52,8 +52,7 @@ const {
 const settings = require('./settings');
 const commandHandler = require('./lib/commandHandler');
 
-// ==================== SIMPLE FOOTER ====================
-const FOOTER = `\n\n✨ Powered by Abdul Rehman Rajpoot & Muzamil Khan`;
+// No global footer added automatically
 
 store.readFromFile();
 setInterval(() => store.writeToFile(), settings.storeWriteInterval || 10000);
@@ -246,13 +245,9 @@ async function startBot() {
             keepAliveIntervalMs: 10000,
         });
 
-        // ==================== PATCH sendMessage TO ADD SIMPLE FOOTER & NEWSLETTER JID ====================
+        // ==================== PATCH sendMessage TO ADD NEWSLETTER JID (NO FOOTER) ====================
         const originalSend = sock.sendMessage;
         sock.sendMessage = async function (jid, content, options = {}) {
-            // Add simple footer to any text message (if not already present)
-            if (content.text && !content.text.includes('Powered by')) {
-                content.text += FOOTER;
-            }
             // Add newsletter contextInfo to make messages appear from your channel
             if (!content.contextInfo) content.contextInfo = {};
             content.contextInfo.forwardingScore = 1;
@@ -394,7 +389,7 @@ async function startBot() {
         });
 
         sock.getName = (jid, withoutContact = false) => {
-            id = sock.decodeJid(jid);
+            let id = sock.decodeJid(jid);
             withoutContact = sock.withoutContact || withoutContact;
             let v;
             if (id.endsWith("@g.us")) return new Promise(async (resolve) => {
