@@ -7,7 +7,11 @@ module.exports = {
   usage: '.description <new description>',
   
   async handler(sock, message, args, context) {
-    if (!message.key.fromMe) return;
+    if (!message.key.fromMe) {
+      return await sock.sendMessage(message.key.remoteJid, {
+        text: '❌ This command can only be used by the bot itself.'
+      }, { quoted: message });
+    }
 
     const { chatId } = context;
     const newDesc = args.join(' ').trim();
@@ -26,7 +30,7 @@ module.exports = {
     } catch (error) {
       console.error('Description error:', error);
       await sock.sendMessage(chatId, {
-        text: `❌ Failed: ${error.message}`
+        text: `❌ Failed to update description: ${error.message}`
       }, { quoted: message });
     }
   }
