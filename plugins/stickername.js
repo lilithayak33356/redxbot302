@@ -9,7 +9,11 @@ module.exports = {
   usage: '.stickername <new pack name>',
   
   async handler(sock, message, args, context) {
-    if (!message.key.fromMe) return;
+    if (!message.key.fromMe) {
+      return await sock.sendMessage(message.key.remoteJid, {
+        text: '❌ This command can only be used by the bot itself.'
+      }, { quoted: message });
+    }
 
     const { chatId } = context;
     const newName = args.join(' ').trim();
@@ -29,7 +33,7 @@ module.exports = {
     } catch (error) {
       console.error('StickerName error:', error);
       await sock.sendMessage(chatId, {
-        text: `❌ Failed: ${error.message}`
+        text: `❌ Failed to save sticker name: ${error.message}`
       }, { quoted: message });
     }
   }
