@@ -2,42 +2,28 @@
 const axios = require('axios');
 const settings = require('../settings');
 
+// Temporary storage for ongoing drama selections per chat
+const dramaSessions = new Map();
+
 module.exports = {
   command: 'drama',
   aliases: ['dramadl', 'watchdrama'],
   category: 'download',
-  description: 'Search and download dramas/videos (mp3 or mp4)',
-  usage: '.drama <name> [result number] [mp3/mp4]',
+  description: 'Search, select, and download dramas/videos interactively',
+  usage: '.drama <name>',
   
   async handler(sock, message, args, context) {
     const { chatId, channelInfo } = context;
-    
-    if (args.length === 0) {
+    const query = args.join(' ').trim();
+
+    if (!query) {
       return await sock.sendMessage(chatId, {
-        text: `🎬 *Drama Downloader*\n\nUsage:\n.drama <drama name> [result number] [mp3/mp4]\n\nExamples:\n.drama sher ep1\n.drama sher ep1 2\n.drama sher ep1 2 mp3`,
+        text: `🎬 *Drama Downloader*\n\nUsage:\n.drama <drama name>\n\nExample: .drama sher ep1`,
         ...channelInfo
       }, { quoted: message });
     }
 
-    // Parse arguments: last could be format, second-last could be index
-    let format = 'mp4'; // default
-    let index = 1;
-    let query = args.join(' ');
-
-    const last = args[args.length - 1].toLowerCase();
-    if (last === 'mp3' || last === 'mp4') {
-      format = last;
-      args.pop(); // remove format
-    }
-
-    const secondLast = args[args.length - 1];
-    if (args.length > 1 && !isNaN(secondLast)) {
-      index = parseInt(secondLast);
-      args.pop(); // remove index
-    }
-
-    query = args.join(' '); // remaining is the search query
-
+    // Step 1: Search
     await sock.sendPresenceUpdate('composing', chatId);
     await sock.sendMessage(chatId, {
       text: `🔍 Searching for "${query}"...`,
@@ -45,7 +31,6 @@ module.exports = {
     }, { quoted: message });
 
     try {
-      // Step 1: Search
       const searchUrl = `https://jawad-tech.vercel.app/search/youtube?q=${encodeURIComponent(query)}`;
       const searchRes = await axios.get(searchUrl, { timeout: 15000 });
 
@@ -61,41 +46,101 @@ module.exports = {
         }, { quoted: message });
       }
 
-      if (index < 1 || index > results.length) {
-        return await sock.sendMessage(chatId, {
-          text: `❌ Invalid number. Use 1-${results.length}`,
+      // Store up to 5 results for this chat
+      const topResults = results.slice(0, 5);
+      dramaSessions.set(chatId, { results: topResults, step: 'select' });
+
+      // Send results with thumbnails and numbers
+      for (let i = 0; i < topResults.length; i++) {
+        const item = topResults[i];
+        const caption = `*${i + 1}.* ${item.title}\n📺 ${item.channel}\n⏱️ ${item.duration}`;
+        await sock.sendMessage(chatId, {
+          image: { url: item.imageUrl },
+          caption: caption,
           ...channelInfo
         }, { quoted: message });
       }
 
-      const selected = results[index - 1];
-      const videoUrl = selected.link;
-      const title = selected.title;
-      const channel = selected.channel;
-      const duration = selected.duration;
-      const thumbnail = selected.imageUrl;
-
-      // Show selected item info
       await sock.sendMessage(chatId, {
-        text: `✅ *Selected:*\n\n📌 *${title}*\n📺 ${channel}\n⏱️ ${duration}\n\n⏳ Fetching ${format.toUpperCase()} download...`,
+        text: `📝 *Reply with the number* (1-${topResults.length}) of the drama you want.`,
         ...channelInfo
       }, { quoted: message });
 
-      // Step 2: Get download link
+    } catch (error) {
+      console.error('❌ Drama search error:', error);
+      await sock.sendMessage(chatId, {
+        text: '❌ Search failed. Please try again later.',
+        ...channelInfo
+      }, { quoted: message });
+    }
+  }
+};
+
+// Handler for user replies (must be called from messageHandler.js)
+async function handleDramaReply(sock, message, context) {
+  const { chatId, senderId, text } = context;
+  const session = dramaSessions.get(chatId);
+  if (!session) return false; // Not in a drama session
+
+  if (session.step === 'select') {
+    // User should send a number
+    const num = parseInt(text);
+    if (isNaN(num) || num < 1 || num > session.results.length) {
+      await sock.sendMessage(chatId, {
+        text: `❌ Invalid number. Please reply with a number between 1 and ${session.results.length}.`,
+        ...context.channelInfo
+      }, { quoted: message });
+      return true;
+    }
+
+    // Store selected index and move to format selection
+    session.selectedIndex = num - 1;
+    session.step = 'format';
+    dramaSessions.set(chatId, session);
+
+    await sock.sendMessage(chatId, {
+      text: `🎬 Selected: *${session.results[session.selectedIndex].title}*\n\nNow reply with the format:\n*mp3* (audio) or *mp4* (video)`,
+      ...context.channelInfo
+    }, { quoted: message });
+    return true;
+  }
+
+  if (session.step === 'format') {
+    const format = text.toLowerCase();
+    if (format !== 'mp3' && format !== 'mp4') {
+      await sock.sendMessage(chatId, {
+        text: '❌ Invalid format. Please reply with *mp3* or *mp4*.',
+        ...context.channelInfo
+      }, { quoted: message });
+      return true;
+    }
+
+    // All set – proceed to download
+    const selected = session.results[session.selectedIndex];
+    const videoUrl = selected.link;
+    const title = selected.title;
+    const channel = selected.channel;
+    const duration = selected.duration;
+    const thumbnail = selected.imageUrl;
+
+    await sock.sendMessage(chatId, {
+      text: `⏳ Fetching ${format.toUpperCase()} download for *${title}*...`,
+      ...context.channelInfo
+    }, { quoted: message });
+
+    try {
       const downloadApiUrl = `https://jawad-tech.vercel.app/download/ytdl?url=${encodeURIComponent(videoUrl)}`;
       const dlRes = await axios.get(downloadApiUrl, { timeout: 60000 });
 
-      // Parse download response – it has result.mp3 and result.mp4
       if (!dlRes.data?.status || !dlRes.data?.result) {
         throw new Error('Invalid download API response');
       }
 
-      const downloadUrl = dlRes.data.result[format]; // mp3 or mp4 field
+      const downloadUrl = dlRes.data.result[format];
       if (!downloadUrl) {
         throw new Error(`No ${format} download available`);
       }
 
-      // Step 3: Send media (video for mp4, audio for mp3)
       const caption = `🎬 *${title}*\n📺 ${channel}\n⏱️ ${duration}\n\n📥 Downloaded via ${settings.botName}`;
       
       let messageOptions;
@@ -116,7 +161,6 @@ module.exports = {
           }
         };
       } else {
-        // mp3 – send as audio
         messageOptions = {
           audio: { url: downloadUrl },
           mimetype: 'audio/mpeg',
@@ -134,22 +178,24 @@ module.exports = {
         };
       }
 
-      await sock.sendMessage(chatId, { ...messageOptions, ...channelInfo }, { quoted: message });
+      await sock.sendMessage(chatId, { ...messageOptions, ...context.channelInfo }, { quoted: message });
+
+      // Clear session
+      dramaSessions.delete(chatId);
 
     } catch (error) {
-      console.error('❌ Drama command error:', error);
-      let errorMsg = '❌ Failed to fetch drama.\n';
-      if (error.response) {
-        errorMsg += `API returned ${error.response.status}`;
-      } else if (error.request) {
-        errorMsg += 'No response from server.';
-      } else {
-        errorMsg += error.message;
-      }
+      console.error('❌ Download error:', error);
       await sock.sendMessage(chatId, {
-        text: errorMsg,
-        ...channelInfo
+        text: '❌ Download failed. Please try again later.',
+        ...context.channelInfo
       }, { quoted: message });
+      dramaSessions.delete(chatId);
     }
+    return true;
   }
-};
+
+  return false;
+}
+
+// Export the reply handler so it can be used in messageHandler.js
+module.exports.handleDramaReply = handleDramaReply;
