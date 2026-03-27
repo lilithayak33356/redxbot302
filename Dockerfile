@@ -1,6 +1,6 @@
 FROM node:20-alpine
 
-# Install system dependencies including ffmpeg (for Heroku Docker builds)
+# Install system dependencies including ffmpeg
 RUN apk add --no-cache \
     git \
     ffmpeg \
@@ -13,11 +13,10 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
-COPY package*.json ./
+# Copy the entire project first (this preserves source code)
+COPY . .
 
-# Clean problematic deps before install
-# Remove ffmpeg-static and @ffmpeg-installer/ffmpeg to avoid architecture issues
-# Also remove any other problematic packages as needed
+# Remove problematic packages from package.json
 RUN node -e "\
 const fs = require('fs'); \
 const pkg = JSON.parse(fs.readFileSync('package.json')); \
@@ -27,21 +26,19 @@ const pkg = JSON.parse(fs.readFileSync('package.json')); \
 }); \
 fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
 
-# Set path to system ffmpeg
+# Verify the package.json is valid
+RUN node -e "JSON.parse(fs.readFileSync('package.json')); console.log('✅ package.json is valid');"
+
+# Set environment variables
 ENV FFMPEG_PATH=/usr/bin/ffmpeg
-ENV NODE_OPTIONS="--max-old-space-size=460"
+ENV NODE_OPTIONS="--max-old-space-size=768"
 
-# Optional: these were for ffmpeg-static, but we removed it; keep if desired
-# ENV npm_config_platform=linuxmusl
-# ENV npm_config_arch=x64
-
+# Install dependencies (using the modified package.json)
 RUN npm install --force --loglevel=error
-
-COPY . .
 
 # Create required directories
 RUN mkdir -p tmp temp data
 
 EXPOSE 3000
 
-CMD ["node", "--max-old-space-size=460", "--optimize-for-size", "index.js"]
+CMD ["node", "--max-old-space-size=768", "--optimize-for-size", "index.js"]
