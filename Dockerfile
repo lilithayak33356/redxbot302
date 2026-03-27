@@ -36,6 +36,9 @@ RUN node -e "const fs = require('fs'); \
 ENV npm_config_platform=linuxmusl
 ENV npm_config_arch=x64
 
+# Prevent ffmpeg-static from downloading a binary (we already have ffmpeg from apk)
+ENV FFMPEG_SKIP_INSTALL=1
+
 # Install dependencies
 RUN npm install --force --loglevel=error
 
