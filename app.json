@@ -3,7 +3,6 @@
   "description": "REDXBOT302 – WhatsApp bot by Abdul Rehman Rajpoot",
   "keywords": ["whatsapp", "bot", "redx"],
   "repository": "https://github.com/AbdulRehman19721986/redxbot302",
-  "stack": "container",
   "env": {
     "SESSION_ID": {
       "description": "Put your session id here (from http://redxpair.gt.tc)",
@@ -13,7 +12,7 @@
     "OWNER_NUMBER": {
       "description": "Your WhatsApp number (without +)",
       "required": true,
-      "value": "61468259338"
+      "value": "3009842133"
     },
     "BOT_NAME": {
       "description": "Bot name",
@@ -26,12 +25,6 @@
       "value": "."
     }
   },
-  "buildpacks": [
-    { "url": "heroku/nodejs" },
-    { "url": "https://github.com/DuckyTeam/heroku-buildpack-imagemagick.git" },
-    { "url": "https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest" },
-    { "url": "https://github.com/clhuang/heroku-buildpack-webp-binaries.git" }
-  ],
   "formation": {
     "web": {
       "quantity": 1,
